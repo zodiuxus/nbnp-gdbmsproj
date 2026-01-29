@@ -21,39 +21,47 @@ def parseEdges(path: Path) -> list[tuple[str, str]]:
 
     return edges
 
-def parseFeatNames(path: Path) -> dict[int, str]:
-    feature_names: dict[int, str] = {}
+def parseFeatNames(path: Path) -> dict[int, tuple[str, str]]:
+    """
+    Returns a dict of features in the following format:
+    {feature_id: (feature_group_name, feature_name)}
+    """
+    feature_names: dict[int, tuple[str, str]] = {}
 
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             idx, name = line.rstrip().split(" ", 1)
-            feature_names[int(idx)] = name
+            name = name.split(':')
+            feature_names[int(idx)] = (name[0], name[1])
 
     return feature_names
 
-def mapNamesToFeats(path: Path, featNames: dict[int, str]) -> dict[str, list[str]]:
+def mapFeatsToUser(path: Path, feat_names: dict[int, tuple[str, str]], ego_id: str = "") -> dict[str, list[str]]:
+    """
+    Returns a dict of feature names
+    mapped to a user in the following format:
+    {userId: [list_of_associated_features]}
+    """
     features: dict[str, list[str]] = {}
 
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            parts = line.rstrip().split()
-            nodeId = parts[0]
+        if ego_id == "":
+            for line in f:
+                parts = line.rstrip().split()
+                node_id = parts[0]
 
-            active = [
-                featNames[i] 
-                for i, v in enumerate(parts[1:])
-                if v == "1"
-            ]
+                active = [
+                    feat_names[i][1]
+                    for i, v in enumerate(parts[1:])
+                    if v == "1"
+                ]
 
-            features[nodeId] = active
+                features[node_id] = active
+        else:
+            values = f.readline().strip().split()
+            features[ego_id] = [feat_names[i][1] for i, v in enumerate(values) if v=='1']
 
     return features
-
-def mapNamesToEgoFeats(path: Path, featNames: dict[int, str], egoId: str) -> dict[str, list[str]]:
-    with open(path, "r", encoding = "utf-8") as f:
-        values = f.readline().strip().split()
-
-    return {egoId: [featNames[i] for i, v in enumerate(values) if v == '1']}
 
 def parseCircles(path: Path) -> dict[str, list[str]]:
     circles: dict[str, list[str]] = defaultdict(list[str])

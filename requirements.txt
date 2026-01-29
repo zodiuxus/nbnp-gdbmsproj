@@ -5,6 +5,8 @@ charset-normalizer==3.4.4
 graphemeu==0.7.2
 idna==3.11
 neo4j==6.1.0
+psycopg==3.3.2
+python-dotenv==1.2.1
 pytz==2025.2
 requests==2.32.5
 urllib3==2.6.3

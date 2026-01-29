@@ -1,4 +1,5 @@
 .git/
 gplus/
 __pycache__/
+.env
 
