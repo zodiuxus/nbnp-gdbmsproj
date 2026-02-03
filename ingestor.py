@@ -1,3 +1,10 @@
+import time
+from typing import LiteralString
+import pandas as pd
+from os import makedirs
+
+RESULT_DIR = "query_results"
+
 def split_to_chunks(data, size:int = 50000):
     for i in range(0, len(data), size):
         yield data[i:i + size]
@@ -5,6 +12,7 @@ def split_to_chunks(data, size:int = 50000):
 class Neo4JIngestor:
     def __init__(self, uri: str, user: str, password: str, database: str) -> None:
         from neo4j import GraphDatabase
+        self.database = database
         self.driver = GraphDatabase.driver(uri, auth=(user, password), database = database)
 
     def close(self):
@@ -19,6 +27,36 @@ class Neo4JIngestor:
             } IN TRANSACTIONS;
             """
         )
+
+    def metrics(self, queries: dict[str, LiteralString], complexity: str):
+        makedirs(RESULT_DIR, exist_ok=True)
+        results = []
+
+        with self.driver.session() as session:
+            for name, query in queries.items():
+                start = time.perf_counter()
+                result = session.run(query)
+                rows = list(result)
+                elapsed = time.perf_counter() - start
+
+                if rows:
+                    df = pd.DataFrame([r.data() for r in rows])
+                else:
+                    df = pd.DataFrame()
+
+                result_path = f"{RESULT_DIR}/{self.database}_{name}.csv"
+                df.to_csv(result_path, index=False)
+
+                results.append({
+                    "db": self.database,
+                    "query": name,
+                    "complexity": complexity,
+                    "time_sec": elapsed,
+                    "rows": len(df),
+                    "preview": df.head(10).to_dict(orient="records"),
+                    "result_path": result_path
+                })
+        return results
         
     def ingestEgoNetwork(
         self,
@@ -216,11 +254,43 @@ class Neo4JIngestor:
 class PSQLIngestor:
     def __init__(self, username: str, password: str, host: str, port: int, dbname: str) -> None:
         import psycopg
+        self.database = dbname
         self.conn= psycopg.connect(dbname = dbname, user = username, password = password, host = host, port = port)
         self.setup_tables()
 
     def close(self):
         self.conn.close()
+
+    def metrics(self, queries: dict[str, LiteralString], complexity: str):
+        results = []
+        makedirs(RESULT_DIR, exist_ok=True)
+
+        with self.conn.cursor() as cur:
+            for name, query in queries.items():
+                start = time.perf_counter()
+                cur.execute(query)
+                rows = cur.fetchall() if cur.description else []
+                elapsed = time.perf_counter() - start
+
+                if cur.description:
+                    columns = [desc[0] for desc in cur.description]
+                    df = pd.DataFrame(rows, columns = columns)
+                else:
+                    df = pd.DataFrame()
+
+                result_path = f"{RESULT_DIR}/{self.database}_{name}.csv"
+                df.to_csv(result_path, index=False)
+
+                results.append({
+                    "db": self.database,
+                    "query": name,
+                    "complexity": complexity,
+                    "time_sec": elapsed,
+                    "rows": len(df),
+                    "preview": df.head(10).to_dict(orient="records"),
+                    "result_path": result_path
+                })
+        return results
 
     def wipe(self):
         with self.conn.cursor() as cur:
@@ -228,7 +298,7 @@ class PSQLIngestor:
                 """
                 truncate table
                 node, ego, user_node, feature, node_features, circle, circle_member
-cascade;
+                cascade;
                 """
             )
             self.conn.commit()
@@ -325,6 +395,8 @@ cascade;
 
         feature_groupnames = list({group for group, _ in features})
 
+        memberships = [(cid, uid) for cid, users in circles.items() for uid in users]
+
         for user_chunk in split_to_chunks(users):
             cur.executemany(
                 """
@@ -353,6 +425,17 @@ cascade;
             self.conn.commit()
 
         circs.clear()
+
+        for membership_chunk in split_to_chunks(memberships):
+            cur.executemany(
+                """
+                insert into circle_member(circle_id, node_id) values (%s, %s)
+                on conflict do nothing
+                """, membership_chunk
+            )
+            self.conn.commit()
+
+        memberships.clear()
 
         for feat_grname_chunk in split_to_chunks(feature_groupnames):
             cur.executemany(
